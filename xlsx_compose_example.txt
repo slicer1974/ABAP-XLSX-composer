@@ -1,0 +1,191 @@
+REPORT z_sample.
+TYPES: BEGIN OF ty_xls,
+         field_1       TYPE I,
+         field_2        TYPE string,
+         field_3    TYPE string,
+         field_4(15)     TYPE P DECIMALS 4,
+         field_5 TYPE D
+         field_6  TYPE D,
+         field_7(30)     TYPE C,
+         field_8      TYPE D,
+         field_9(10)    TYPE C,
+       END OF ty_xls,
+       tty_xls TYPE STANDARD TABLE OF ty_xls WITH KEY field_1.
+
+DATA g_xlsx_xstring TYPE xstring.
+
+START-OF-SELECTION.
+  PERFORM build_excel_report CHANGING g_xlsx_xstring.
+  IF g_xlsx_xstring IS NOT INITIAL.
+  	PERFORM show_excel_report USING g_xlsx_xstring.
+  	PERFORM send_excel_by_mail USING g_xlsx_xstring.
+  ELSE.
+  Message 'Something goes wrong' type 'E'.
+  ENDIF.
+
+****************************
+FORM build_excel_report CHANGING p_xlsx_xstring.
+  DATA lt_xls TYPE tty_xls.
+
+  DO 20 TIMES.
+    APPEND INITIAL LINE TO lt_xls ASSIGNING FIELD-SYMBOL(<fs_xls>).
+    <fs_xls>-field_1 = sy-index.
+    <fs_xls>-field_2 = |{ sy-index + 100 }|.
+    <fs_xls>-field_3 = |field with value { sy-index + 200 }|.
+    <fs_xls>-field_4 = sy-index / 3.
+    <fs_xls>-field_5 = sy-datum.    
+    <fs_xls>-field_6 = sy-datum + 100.
+    <fs_xls>-field_7 = |another field:{ sy-index + 300 }|.
+    <fs_xls>-field_8 = sy-datum - 100.
+    <fs_xls>-field_9 = |some field:{ sy-index + 1 }|.
+  ENDDO.
+  PERFORM make_excel_report USING lt_xls CHANGING p_xlsx_xstring.
+ENDFORM.
+
+****************************
+FORM show_excel_report USING p_xlsx_xstring TYPE xstring.
+  DATA(l_tmp_filename) = |c:\temp\result.xlsx|.
+
+  TRY.
+      cl_openxml_helper=>store_local_file(
+      im_file_name = l_tmp_filename
+      im_data = p_xlsx_xstring  ).
+    CATCH cx_openxml_not_allowed.
+      RETURN.
+  ENDTRY.
+  cl_gui_frontend_services=>execute( EXPORTING document = l_tmp_filename EXCEPTIONS OTHERS = 0 ).
+ENDFORM.
+
+****************************
+FORM send_excel_by_mail USING p_xlsx_xstring TYPE xstring.
+*Initialization
+  DATA m_messenger TYPE REF TO cl_bcs_message.
+
+  DATA(l_message) = |Result message with xlsx attachment|.
+
+  CREATE OBJECT m_messenger.
+  m_messenger->set_status_mail( 'E' ).
+  m_messenger->set_requested_status( 'D' ).
+  m_messenger->set_importance( 'N' ).
+  m_messenger->set_subject( l_message ).
+  m_messenger->set_sender( |me@gmail.com| ).
+  m_messenger->set_main_doc( l_message ).
+
+*Attachment
+  DATA ls_file TYPE bcss_file.
+
+  ls_file-filename = condense( |{ sy-datum DATE = ISO }| ) && '_result_' && '.xlsx'.
+  ls_file-contents = p_xlsx_xstring.
+  m_messenger->add_attachment( iv_filename     = ls_file-filename
+                               iv_contents_bin = ls_file-contents ).
+
+*Recepient
+  m_messenger->add_recipient( |me@gmail.com| ).
+
+*Send
+  TRY.
+      m_messenger->send( ).
+    CATCH cx_bcs_send.
+      MESSAGE 'Send mail ERROR' TYPE 'E'.
+  ENDTRY.
+ENDFORM.
+
+INCLUDE zlr_xlsx_xml_incl.
+
+****************************
+FORM make_excel_report USING pt_xls_data TYPE tty_xls CHANGING p_xlsx_xstring TYPE xstring.
+
+  CONSTANTS: lc_xlsx_template_file    TYPE string VALUE 'report_template.xlsx',
+             lc_header_placeholder    TYPE string VALUE 'header_1',
+             lc_grade_placeholder     TYPE string VALUE 'grage_1',
+             lc_sign_placeholder      TYPE string VALUE 'sign_1',
+             lc_xlsx_table_first_cell TYPE string VALUE '1_table_cell',
+             lc_last_table_column     TYPE string VALUE 'I'.
+
+  TRY.
+      DATA(lr_workbook) = NEW lcl_xlsx_as_xml( lc_xlsx_template_file ).
+    CATCH cx_openxml_not_found cx_openxml_format.
+      MESSAGE 'Template open error' TYPE 'E'.
+  ENDTRY.
+
+  TRY.
+      DATA(lr_worksheet) = lr_workbook->load_worksheet( 0 ).
+    CATCH cx_openxml_format.
+      MESSAGE 'Template worksheet open error' TYPE 'E'.
+  ENDTRY.
+
+  TRY.
+      DATA(lr_shared_strings) = lr_workbook->load_shared_strings( ).
+    CATCH cx_openxml_format cx_openxml_not_found.
+      MESSAGE 'Template shared strings open error' TYPE 'E'.
+  ENDTRY.
+
+*Replace placeholders
+  DATA(lref_oxml_handle) = NEW lcl_oxml_handle( i_oxml = cl_openxml_helper=>xstring_to_string( lr_worksheet->get_data( ) )
+                                                i_shared_strings = cl_openxml_helper=>xstring_to_string( lr_shared_strings->get_data( ) )
+                                              ).
+
+*header
+ DATA(l_header_string) = |Some header string|.
+
+  DATA(l_header_placeholder_cell) = lref_oxml_handle->search_cell_by_value( lc_header_placeholder ).
+  IF l_header_placeholder_cell IS NOT INITIAL.
+    DATA(l_new_cell) = lcl_oxml_utils=>build_text_cell( i_cell_format = lcl_oxml_utils=>get_cell_format( l_header_placeholder_cell )
+                                                        i_absolute_cell_pos = lcl_oxml_utils=>get_cell_absolute_position( l_header_placeholder_cell )
+                                                        i_text_value = l_header_string
+                                                       ).
+    lref_oxml_handle->replace_element( i_old_element = l_header_placeholder_cell  i_new_element = l_new_cell ).
+  ENDIF.
+
+****Grade and signature
+  DATA(l_grade) = |Big boss|.
+  DATA(l_signature) = |Iron Mask|.
+
+*Place grade
+  DATA(l_grade_placeholder_cell) = lref_oxml_handle->search_cell_by_value( lc_grade_placeholder ).
+  IF l_grade_placeholder_cell IS NOT INITIAL.
+    l_new_cell = lcl_oxml_utils=>build_text_cell( i_cell_format = lcl_oxml_utils=>get_cell_format( l_grade_placeholder_cell )
+                                                  i_absolute_cell_pos = lcl_oxml_utils=>get_cell_absolute_position( l_grade_placeholder_cell )
+                                                  i_text_value = l_grade
+                                                ).
+    lref_oxml_handle->replace_element( i_old_element = l_grade_placeholder_cell  i_new_element = l_new_cell ).
+  ENDIF.
+
+
+*Place signature
+  DATA(l_sign_placeholder_cell) = lref_oxml_handle->search_cell_by_value( lc_sign_placeholder ).
+  IF l_sign_placeholder_cell IS NOT INITIAL.
+    l_new_cell = lcl_oxml_utils=>build_text_cell( i_cell_format = lcl_oxml_utils=>get_cell_format( l_sign_placeholder_cell )
+                                                  i_absolute_cell_pos = lcl_oxml_utils=>get_cell_absolute_position( l_sign_placeholder_cell )
+                                                  i_text_value = l_signature
+                                                 ).
+    lref_oxml_handle->replace_element( i_old_element = l_sign_placeholder_cell  i_new_element = l_new_cell ).
+  ENDIF.
+
+*Table with data
+  DATA(l_start_cell) = lref_oxml_handle->search_cell_by_value( lc_xlsx_table_first_cell ).
+
+  IF l_start_cell IS INITIAL.
+    MESSAGE 'XLSX template parsing error: no first cell placeholder found' TYPE 'E'.
+  ENDIF.
+
+*Fill table
+  DATA(l_xml_data_string) = lref_oxml_handle->build_xml_table_by_template( i_start_template_cell = l_start_cell
+                                                                           i_end_cell_column = lc_last_table_column
+                                                                           i_abap_table = pt_xls_data ).
+*Replace template xlsx table start row with filled table
+  lref_oxml_handle->replace_template_row_with_tbl( i_start_template_cell = l_start_cell i_table_xml_string = l_xml_data_string ).
+
+*This step is REQURED if there is cell with data in xlsx BELOW table 
+  lref_oxml_handle->process_reminder( i_added_xml = l_xml_data_string i_added_rows_count = lines( pt_xls_data ) ).
+
+  DATA(new_data) = cl_openxml_helper=>string_to_xstring( lref_oxml_handle->get_final_xml( ) ).
+
+  lr_worksheet->feed_data( new_data ).
+
+  TRY.
+      p_xlsx_xstring = lr_workbook->rebuild_xlsx(  ).
+    CATCH cx_openxml_format.
+      RETURN.
+  ENDTRY.
+ENDFORM.

@@ -1,0 +1,768 @@
+*Base class for xlsx manipulations
+CLASS lcl_xlsx_as_xml DEFINITION FINAL.
+  PUBLIC SECTION.
+    METHODS constructor
+      IMPORTING i_xlsx_file_name TYPE string
+      RAISING   cx_openxml_not_found cx_openxml_format.
+    METHODS load_worksheet
+      IMPORTING i_sheet_number        TYPE i
+      RETURNING VALUE(rref_worksheet) TYPE REF TO cl_openxml_part
+      RAISING   cx_openxml_format.
+    METHODS load_shared_strings
+      RETURNING VALUE(rref_shared_strings) TYPE REF TO cl_openxml_part
+      RAISING   cx_openxml_format cx_openxml_not_found.
+
+    METHODS rebuild_xlsx
+      RETURNING VALUE(r_xlsx_data) TYPE xstring
+      RAISING   cx_openxml_format.
+
+  PRIVATE SECTION.
+    DATA _ref_xlsx_document TYPE REF TO cl_xlsx_document.
+    DATA _ref_oxml_workbook TYPE REF TO cl_xlsx_workbookpart.
+ENDCLASS.
+
+CLASS lcl_xlsx_as_xml IMPLEMENTATION.
+  METHOD constructor.
+    TRY.
+        DATA(l_data) = cl_openxml_helper=>load_local_file( i_xlsx_file_name ).
+      CATCH cx_openxml_not_found.
+        MESSAGE 'Template load error' TYPE 'E'.
+    ENDTRY.
+   _ref_xlsx_document = cl_xlsx_document=>load_document( iv_data = l_data ).
+   _ref_oxml_workbook = _ref_xlsx_document->get_workbookpart( ).
+  ENDMETHOD.
+
+  METHOD load_worksheet.
+    DATA(lr_collection) = _ref_oxml_workbook->get_worksheetparts( ).
+    rref_worksheet = lr_collection->get_part( i_sheet_number ).
+  ENDMETHOD.
+
+  METHOD load_shared_strings.
+    rref_shared_strings = _ref_oxml_workbook->get_sharedstringspart( ).
+  ENDMETHOD.
+
+  METHOD rebuild_xlsx.
+    r_xlsx_data = _ref_xlsx_document->get_package_data(  ).
+  ENDMETHOD.
+ENDCLASS.
+
+*Class for handle openxml xlsx data
+CLASS lcl_oxml_handle DEFINITION FINAL.
+  PUBLIC SECTION.
+    TYPES: ty_row_cell_formats_tbl TYPE STANDARD TABLE OF string WITH KEY table_line.
+
+    METHODS constructor
+      IMPORTING i_oxml           TYPE string
+                i_shared_strings TYPE string OPTIONAL.
+
+    METHODS search_cell_by_value
+      IMPORTING i_cell_value  TYPE string
+      RETURNING VALUE(r_cell) TYPE string.
+
+    METHODS search_cell_by_absolute_pos
+      IMPORTING i_cell_position TYPE string
+      RETURNING VALUE(r_cell)   TYPE string.
+
+    METHODS search_cell_with_offset
+      IMPORTING i_start_offset TYPE i
+      RETURNING VALUE(r_cell)  TYPE string.
+
+    METHODS search_row_by_start_offset
+      IMPORTING i_start_offset TYPE i
+      RETURNING VALUE(r_row)   TYPE string.
+
+    METHODS search_row_by_abs_position
+      IMPORTING i_absolute_row_pos TYPE string
+      RETURNING VALUE(r_row)       TYPE string.
+
+    METHODS search_merge_by_start_offset
+      IMPORTING i_start_offset TYPE i
+      RETURNING VALUE(r_merge) TYPE string.
+
+    METHODS add_custom_merge
+      IMPORTING r_custom_merge TYPE string.
+
+    METHODS add_custom_merges
+      IMPORTING it_custom_merges TYPE string_table.
+
+    METHODS get_element_offset
+      IMPORTING i_element            TYPE string
+                i_start_offset       TYPE i
+      RETURNING VALUE(r_cell_offset) TYPE i.
+
+    METHODS replace_element
+      IMPORTING i_old_element TYPE string
+                i_new_element TYPE string.
+
+    METHODS replace_template_row_with_tbl
+      IMPORTING i_start_template_cell TYPE string
+                i_table_xml_string    TYPE string.
+
+    METHODS get_final_xml
+      RETURNING VALUE(r_final_xml) TYPE string.
+
+    METHODS process_reminder
+      IMPORTING i_added_xml        TYPE string
+                i_added_rows_count TYPE i.
+
+    METHODS get_row_cell_format_tbl
+      IMPORTING i_start_row_cell           TYPE string
+                i_end_cell_column          TYPE string OPTIONAL
+      RETURNING VALUE(rt_row_cell_formats) TYPE ty_row_cell_formats_tbl.
+
+    METHODS build_xml_table_by_template
+      IMPORTING i_start_template_cell TYPE string
+                i_end_cell_column     TYPE string OPTIONAL
+                it_row_cell_format    TYPE ty_row_cell_formats_tbl OPTIONAL
+                i_abap_table          TYPE ANY TABLE
+      RETURNING VALUE(r_table_xml)    TYPE string.
+
+  PRIVATE SECTION.
+    DATA: oxml_string    TYPE string,
+          shared_strings TYPE string.
+
+    METHODS search_cell_reminder_by_offset
+      IMPORTING i_start_offset TYPE i
+      RETURNING VALUE(r_cell)  TYPE string.
+
+ENDCLASS.
+
+* Aux methods for xlsx oxml string parsing and conversation
+CLASS lcl_oxml_utils DEFINITION FINAL.
+  PUBLIC SECTION.
+    TYPES: ty_row_cell_formats_tbl TYPE STANDARD TABLE OF string WITH KEY table_line.
+
+    CLASS-METHODS abap_date_to_xlsx_internal
+      IMPORTING i_abap_date                 TYPE d
+      RETURNING VALUE(r_xlsx_internal_date) TYPE string.
+
+    CLASS-METHODS get_cell_format
+      IMPORTING i_cell               TYPE string
+      RETURNING VALUE(r_cell_format) TYPE string.
+
+    CLASS-METHODS get_cell_absolute_position
+      IMPORTING i_cell                 TYPE string
+      RETURNING VALUE(r_cell_position) TYPE string.
+
+    CLASS-METHODS get_position_row
+      IMPORTING i_position   TYPE string
+      RETURNING VALUE(r_row) TYPE string.
+
+    CLASS-METHODS get_position_column
+      IMPORTING i_position      TYPE string
+      RETURNING VALUE(r_column) TYPE string.
+
+    CLASS-METHODS replace_position_row
+      IMPORTING i_position        TYPE string
+                i_new_cell_row    TYPE string
+      RETURNING VALUE(r_position) TYPE string.
+
+    CLASS-METHODS replace_cell_absolute_position
+      IMPORTING i_cell            TYPE string
+                i_new_position    TYPE string
+      RETURNING VALUE(r_new_cell) TYPE string.
+
+    CLASS-METHODS make_next_column_cell_position
+      IMPORTING i_cell_position                    TYPE string
+      RETURNING VALUE(r_next_column_cell_position) TYPE string.
+
+    CLASS-METHODS build_date_cell
+      IMPORTING i_cell_format       TYPE string
+                i_absolute_cell_pos TYPE string OPTIONAL
+                i_date_value        TYPE d
+      RETURNING VALUE(r_cell)       TYPE string.
+
+    CLASS-METHODS build_text_cell
+      IMPORTING i_cell_format       TYPE string
+                i_absolute_cell_pos TYPE string OPTIONAL
+                i_text_value        TYPE clike
+      RETURNING VALUE(r_cell)       TYPE string.
+
+    CLASS-METHODS build_numeric_cell
+      IMPORTING i_cell_format       TYPE string
+                i_absolute_cell_pos TYPE string OPTIONAL
+                i_numeric_value     TYPE numeric
+      RETURNING VALUE(r_cell)       TYPE string.
+
+    CLASS-METHODS replace_cell_value
+      IMPORTING i_cell        TYPE string
+                i_new_value   TYPE string
+      RETURNING VALUE(r_cell) TYPE string.
+
+    CLASS-METHODS get_row_absolute_position
+      IMPORTING i_row                 TYPE string
+      RETURNING VALUE(r_row_position) TYPE string.
+
+    CLASS-METHODS replace_row_absolute_position
+      IMPORTING i_row          TYPE string
+                i_new_position TYPE string
+      RETURNING VALUE(r_row)   TYPE string.
+
+    CLASS-METHODS get_merge_start_row
+      IMPORTING i_merge                  TYPE string
+      RETURNING VALUE(r_merge_start_row) TYPE string.
+
+    CLASS-METHODS replace_merge_start_row
+      IMPORTING i_merge             TYPE string
+                i_changed_start_row TYPE string
+      RETURNING VALUE(r_merge)      TYPE string.
+
+    CLASS-METHODS get_merge_end_row
+      IMPORTING i_merge                TYPE string
+      RETURNING VALUE(r_merge_end_row) TYPE string.
+
+    CLASS-METHODS replace_merge_end_row
+      IMPORTING i_merge           TYPE string
+                i_changed_end_row TYPE string
+      RETURNING VALUE(r_merge)    TYPE string.
+
+    CLASS-METHODS build_custom_merge
+      IMPORTING i_start_column        TYPE string
+                i_start_row           TYPE string
+                i_end_column          TYPE string
+                i_end_row             TYPE string
+      RETURNING VALUE(r_custom_merge) TYPE string.
+
+    CLASS-METHODS build_xml_tbl_row_by_template
+      IMPORTING it_row_cell_formats TYPE ty_row_cell_formats_tbl OPTIONAL
+                is_abap_table_row   TYPE any
+      RETURNING VALUE(r_row_xml)    TYPE string.
+
+    CLASS-METHODS build_row_field
+      IMPORTING i_value            TYPE simple
+                i_format           TYPE string
+      RETURNING VALUE(r_field_xml) TYPE string.
+
+ENDCLASS.
+
+CLASS lcl_oxml_handle IMPLEMENTATION.
+  METHOD constructor.
+    oxml_string = i_oxml.
+    IF i_shared_strings IS SUPPLIED.
+      shared_strings = i_shared_strings.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD search_cell_reminder_by_offset.
+    IF i_start_offset  = -1.
+      MESSAGE 'Error at string searching' TYPE 'E'.
+    ENDIF.
+*Search minimal position from two possible XML cell ending
+**Cell without data
+    DATA(l_search_string_end_offset) = find( val = oxml_string off = i_start_offset regex = '/>' occ = 1 ).
+    IF l_search_string_end_offset = -1.
+      l_search_string_end_offset = cl_abap_math=>max_int4.
+    ELSE.
+      l_search_string_end_offset = l_search_string_end_offset + 2.
+    ENDIF.
+**Cell with data
+    DATA(l_search_string_endcell_offset) = find( val = oxml_string off = i_start_offset regex = '</c>' occ = 1 ).
+    IF l_search_string_endcell_offset = -1.
+      l_search_string_endcell_offset = cl_abap_math=>max_int4.
+    ELSE.
+      l_search_string_endcell_offset = l_search_string_endcell_offset + 4.
+    ENDIF.
+
+    l_search_string_end_offset = nmin( val1 = l_search_string_end_offset
+                                       val2 = l_search_string_endcell_offset ).
+
+    IF l_search_string_end_offset = cl_abap_math=>max_int4.
+      RETURN.
+    ENDIF.
+    r_cell = substring( val = oxml_string off = i_start_offset len = l_search_string_end_offset - i_start_offset ).
+  ENDMETHOD.
+
+  METHOD search_cell_by_value.
+*Proceed search in sheet xml first, then in shared strings xml
+    r_cell = match( val = oxml_string regex = '<c[^>]+><v>' && condense( i_cell_value ) && '</v></c>' occ = 1 ).
+    IF r_cell IS INITIAL AND shared_strings IS NOT INITIAL.
+      DATA(l_search_string_start_offset) = find( val = shared_strings regex = '<sst' off = 1 occ = 1 ).
+      IF l_search_string_start_offset = -1.
+        RETURN.
+      ENDIF.
+      DATA(l_search_string_end_offset) = find( val = shared_strings sub = '</sst>' off = 1 occ = 1 ).
+      IF l_search_string_end_offset = -1.
+        RETURN.
+      ENDIF.
+      DATA(l_searched_string) = substring( val = shared_strings off = l_search_string_start_offset len = l_search_string_end_offset - l_search_string_start_offset ).
+
+      DATA(l_result_end_offset) = VALUE i( ).
+      DO.
+*"t" and "si" tags can be separaated with tag "r" and who knows else that...
+        DATA(l_result_start_offset) = find_end( val = l_searched_string regex = '<si>[^t]+t' off = l_result_end_offset occ = 1 ).
+        IF l_result_start_offset = -1.
+          EXIT.
+        ENDIF.
+        l_result_start_offset = find( val = l_searched_string sub = '>' off = l_result_start_offset occ = 1 ) + strlen( '>' ).
+        IF l_result_start_offset = -1.
+          EXIT.
+        ENDIF.
+
+        l_result_end_offset = find( val = l_searched_string regex = '</t>[^s]+si>' off = l_result_start_offset occ = 1 ).
+        IF l_result_end_offset = -1.
+          EXIT.
+        ENDIF.
+        DATA(l_result) = substring( val = l_searched_string off = l_result_start_offset len = l_result_end_offset - l_result_start_offset ).
+        IF l_result  = i_cell_value.
+          DATA(l_cell_index) = |{ sy-index - 1 }|.
+          r_cell = match( val = oxml_string regex = '<c[^>]+t="s"[^>]*><v>' && condense( l_cell_index ) && '</v></c>' occ = 1 ).
+          EXIT.
+        ENDIF.
+      ENDDO.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD search_cell_by_absolute_pos.
+    DATA(l_search_string_start_offset) = find( val = oxml_string regex = '<c[^>]r="' && condense( i_cell_position ) ).
+    IF l_search_string_start_offset  = -1.
+      RETURN.
+    ENDIF.
+    r_cell = search_cell_reminder_by_offset( l_search_string_start_offset ).
+  ENDMETHOD.
+
+  METHOD search_cell_with_offset.
+    DATA(l_search_string_start_offset) = find( val = oxml_string regex = '<c[^>]' off = i_start_offset occ = 1 ).
+    IF l_search_string_start_offset  = -1.
+      RETURN.
+    ENDIF.
+    r_cell = search_cell_reminder_by_offset( l_search_string_start_offset ).
+  ENDMETHOD.
+
+  METHOD get_element_offset.
+    r_cell_offset = find( val = oxml_string sub = i_element off = i_start_offset occ = 1 ).
+  ENDMETHOD.
+
+  METHOD search_row_by_start_offset.
+    DATA(l_found_row_start_offset) = find( val = oxml_string off = i_start_offset regex = '<row' occ = 1 ).
+    IF l_found_row_start_offset = -1.
+      RETURN.
+    ENDIF.
+*row can end with tag </row> or, when no cells is in there, with tag />
+    DATA(l_found_next_start_offset) = find( val = oxml_string off = l_found_row_start_offset + 1 regex = '<row' occ = 1 ).
+    DATA(l_found_row_end_offset) = find( val = oxml_string off = l_found_row_start_offset regex = '</row>' occ = 1 ).
+    IF l_found_row_end_offset <> -1 AND
+      ( l_found_next_start_offset = -1 OR l_found_row_end_offset < l_found_next_start_offset ).
+      l_found_row_end_offset = l_found_row_end_offset + 6.
+    ELSE.
+      l_found_row_end_offset = find( val = oxml_string off = l_found_row_start_offset regex = '/>' occ = 1 ).
+      IF l_found_row_end_offset <> -1.
+        l_found_row_end_offset = l_found_row_end_offset + 2.
+      ELSE.
+        RETURN.
+      ENDIF.
+    ENDIF.
+    r_row = substring( val = oxml_string off = l_found_row_start_offset len = l_found_row_end_offset - l_found_row_start_offset ).
+  ENDMETHOD.
+
+  METHOD search_row_by_abs_position.
+    DATA(l_found_row_start_offset) = find( val = oxml_string regex = '<row r="' && condense( i_absolute_row_pos ) && '(?=")' occ = 1 ).
+    IF l_found_row_start_offset = -1.
+      RETURN.
+    ENDIF.
+*row can end with tag </row> or, when no cells is in there, with tag />
+    DATA(l_found_next_start_offset) = find( val = oxml_string off = l_found_row_start_offset + 1 regex = '<row' occ = 1 ).
+    DATA(l_found_row_end_offset) = find( val = oxml_string off = l_found_row_start_offset regex = '</row>' occ = 1 ).
+    IF l_found_row_end_offset <> -1 AND
+      ( l_found_next_start_offset = -1 OR l_found_row_end_offset < l_found_next_start_offset ).
+      l_found_row_end_offset = l_found_row_end_offset + 6.
+    ELSE.
+      l_found_row_end_offset = find( val = oxml_string off = l_found_row_start_offset regex = '/>' occ = 1 ).
+      IF l_found_row_end_offset <> -1.
+        l_found_row_end_offset = l_found_row_end_offset + 2.
+      ELSE.
+        RETURN.
+      ENDIF.
+    ENDIF.
+    r_row = substring( val = oxml_string off = l_found_row_start_offset len = l_found_row_end_offset - l_found_row_start_offset ).
+  ENDMETHOD.
+
+  METHOD search_merge_by_start_offset.
+    DATA(l_merge_start_offset) = find( val = oxml_string off = i_start_offset regex = '<mergeCell ref="[^"]+"' ).
+    IF l_merge_start_offset = -1.
+      RETURN.
+    ENDIF.
+    DATA(l_merge_end_offset) = find( val = oxml_string off = l_merge_start_offset + 16 regex = '"/>' ).
+    IF l_merge_end_offset = -1.
+      RETURN.
+    ELSE.
+      l_merge_end_offset = l_merge_end_offset + 3.
+    ENDIF.
+    r_merge = substring( val = oxml_string off = l_merge_start_offset len = l_merge_end_offset - l_merge_start_offset ).
+  ENDMETHOD.
+
+  METHOD add_custom_merge.
+    DATA(l_merges) = match( val = oxml_string regex = '</sheetData><mergeCells count="[0-9]+">' ).
+    IF l_merges IS NOT INITIAL.
+      oxml_string = replace( val = oxml_string sub = l_merges with = l_merges && r_custom_merge ).
+    ELSE.
+      oxml_string = replace( val = oxml_string sub = '</sheetData>' with = '</sheetData><mergeCells count="1">' && r_custom_merge ).
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD add_custom_merges.
+    DATA(l_merges) = match( val = oxml_string regex = '</sheetData><mergeCells count="[0-9]+">' ).
+    DATA(l_merges_str) = concat_lines_of( table = it_custom_merges ).
+    IF l_merges IS NOT INITIAL.
+      oxml_string = replace( val = oxml_string sub = l_merges with = l_merges && l_merges_str ).
+    ELSE.
+      oxml_string = replace( val = oxml_string sub = '</sheetData>' with = '</sheetData><mergeCells count="1">' && l_merges_str ).
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD get_row_cell_format_tbl.
+*Make intenal table with cells formats, starting with cell - parameter
+    DATA(l_next_cell) = i_start_row_cell.
+    DATA(l_next_cell_position) = lcl_oxml_utils=>get_cell_absolute_position( i_start_row_cell ).
+    DO.
+      IF l_next_cell IS NOT INITIAL.
+        rt_row_cell_formats = VALUE #( BASE rt_row_cell_formats
+                                       ( lcl_oxml_utils=>get_cell_format( l_next_cell ) )
+                                     ).
+        DATA(l_cell_position) = lcl_oxml_utils=>get_cell_absolute_position( l_next_cell ).
+      ELSE.
+        IF i_end_cell_column IS INITIAL OR l_next_cell_position IS INITIAL.
+          EXIT.
+        ELSE.
+          l_cell_position = l_next_cell_position.
+          DATA(l_cell_column) = lcl_oxml_utils=>get_position_column( l_cell_position ).
+          IF strlen( i_end_cell_column ) <= strlen( l_cell_column ) AND i_end_cell_column < l_cell_column.
+            EXIT.
+          ELSE.
+            rt_row_cell_formats = VALUE #( BASE rt_row_cell_formats
+                                           ( `0` )
+                                         ).
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      l_next_cell_position = lcl_oxml_utils=>make_next_column_cell_position( l_cell_position ).
+      l_next_cell = search_cell_by_absolute_pos( l_next_cell_position ).
+    ENDDO.
+  ENDMETHOD.
+
+  METHOD replace_template_row_with_tbl.
+    DATA(l_row) = search_row_by_abs_position( lcl_oxml_utils=>get_position_row( lcl_oxml_utils=>get_cell_absolute_position( i_start_template_cell ) ) ).
+    IF l_row IS INITIAL.
+      RETURN.
+    ENDIF.
+    oxml_string = replace( val = oxml_string sub = l_row with = i_table_xml_string ).
+  ENDMETHOD.
+
+*Handle sheet data BELOW inserted rows
+  METHOD process_reminder.
+**Compute offset of sheet data AFTER inseted table 
+    DATA(l_reminder_start_offset) = find( val = oxml_string sub = i_added_xml ).
+    IF l_reminder_start_offset = - 1.
+      RETURN.
+    ENDIF.
+    l_reminder_start_offset = l_reminder_start_offset + strlen( i_added_xml ).
+    DATA(l_reminder_end_offset) = find( val = oxml_string off = l_reminder_start_offset regex = '</worksheet>' occ = 1 ).
+    IF l_reminder_start_offset = l_reminder_end_offset.
+      RETURN.
+    ENDIF.
+**Get sheet reminder XML
+    DATA(l_reminder_xml) = substring( val = oxml_string off = l_reminder_start_offset len = l_reminder_end_offset - l_reminder_start_offset ).
+
+    DATA(l_all_found_rows) = VALUE string( ).
+    DATA(l_all_new_rows) = VALUE string( ).
+**Search all strings from start of reminder and replace each row number in it on row number + offcet 
+    DATA(lref_reminder_xml_handle) = NEW lcl_oxml_handle( l_reminder_xml ).
+    DATA(l_row_start_offset) = 0.
+    DO.
+      DATA(l_found_row) = lref_reminder_xml_handle->search_row_by_start_offset( l_row_start_offset ).
+      IF l_found_row IS INITIAL.
+        EXIT.
+      ENDIF.
+      l_all_found_rows = l_all_found_rows && l_found_row.
+      l_row_start_offset = lref_reminder_xml_handle->get_element_offset( i_element = l_found_row i_start_offset = l_row_start_offset ).
+
+      DATA(l_found_row_position) = lcl_oxml_utils=>get_row_absolute_position( l_found_row ).
+**Remember reminder first string number 
+      IF sy-index = 1.
+        DATA(l_reminder_start_row) = l_found_row_position.
+      ENDIF.
+      DATA(l_new_row_position) = |{ l_found_row_position + i_added_rows_count - 1 }|.
+      DATA(l_new_row) = lcl_oxml_utils=>replace_row_absolute_position( i_row = l_found_row i_new_position = l_new_row_position ).
+      DATA(l_end_offset) = l_row_start_offset + strlen( l_found_row ).
+
+**Search cell in string and replace each row number in it on row number + offcet 
+      DATA(lref_row_xml_handle) = NEW lcl_oxml_handle( l_new_row ).
+      DATA(l_cell_start_offset) = 0.
+      DO.
+        DATA(l_found_cell) = lref_row_xml_handle->search_cell_with_offset( l_cell_start_offset ).
+        IF l_found_cell IS INITIAL.
+          EXIT.
+        ENDIF.
+        l_cell_start_offset = lref_row_xml_handle->get_element_offset( i_element = l_found_cell i_start_offset = l_cell_start_offset ).
+
+        DATA(l_found_cell_position) = lcl_oxml_utils=>get_cell_absolute_position( l_found_cell ).
+        DATA(l_new_cell_position) = lcl_oxml_utils=>replace_position_row( i_position = l_found_cell_position i_new_cell_row = l_new_row_position ).
+        DATA(l_new_cell) = lcl_oxml_utils=>replace_cell_absolute_position( i_cell = l_found_cell i_new_position = l_new_cell_position ).
+        lref_row_xml_handle->replace_element( i_old_element = l_found_cell i_new_element = l_new_cell ).
+        l_cell_start_offset = l_cell_start_offset + strlen( l_new_cell ) - 1.
+      ENDDO.
+
+      l_new_row = lref_row_xml_handle->get_final_xml( ).
+
+      FREE lref_row_xml_handle.
+      l_all_new_rows = l_all_new_rows && l_new_row.
+      l_row_start_offset = l_end_offset.
+    ENDDO.
+    IF l_all_found_rows IS NOT INITIAL AND l_all_new_rows IS NOT INITIAL AND l_all_new_rows <> l_all_found_rows.
+      lref_reminder_xml_handle->replace_element( i_old_element = l_all_found_rows i_new_element = l_all_new_rows ).
+    ENDIF.
+    DATA(l_replaced_reminder_xml) = lref_reminder_xml_handle->get_final_xml( ).
+
+*If reminder is not empty
+    IF l_reminder_start_row > 0.
+**Search all merges and replace each row number in it on row number + offcet 
+      DATA(l_merge_start_offset) = find( val = l_replaced_reminder_xml sub = '<mergeCell ref' occ = 1 ).
+      IF l_merge_start_offset <> -1.
+        l_end_offset = find( val = l_replaced_reminder_xml sub = '</mergeCells>' occ = 1 ).
+        DATA(l_found_merges_xml) = substring( val = l_replaced_reminder_xml off = l_merge_start_offset len = l_end_offset - l_merge_start_offset ).
+
+        DATA(l_new_merges_xml) = VALUE string( ).
+        DATA(lref_merges_xml_handle) = NEW lcl_oxml_handle( l_found_merges_xml ).
+        l_merge_start_offset = 0.
+        DO.
+          DATA(l_found_merge) = lref_merges_xml_handle->search_merge_by_start_offset( l_merge_start_offset ).
+          IF l_found_merge IS INITIAL.
+            EXIT.
+          ENDIF.
+          l_merge_start_offset = lref_merges_xml_handle->get_element_offset( i_element = l_found_merge i_start_offset = l_merge_start_offset ).
+
+          DATA(l_new_merge) = l_found_merge.
+          DATA(l_merge_start_row) = lcl_oxml_utils=>get_merge_start_row( l_new_merge ).
+          IF l_merge_start_row - l_reminder_start_row >= 0.
+            l_new_merge = lcl_oxml_utils=>replace_merge_start_row( i_merge = l_new_merge i_changed_start_row = |{ l_merge_start_row + i_added_rows_count - 1 }| ).
+          ENDIF.
+
+          DATA(l_merge_end_row) = lcl_oxml_utils=>get_merge_end_row( l_new_merge ).
+          IF l_merge_end_row - l_reminder_start_row >= 0.
+            l_new_merge = lcl_oxml_utils=>replace_merge_end_row( i_merge = l_new_merge i_changed_end_row = |{ l_merge_end_row + i_added_rows_count - 1 }| ).
+          ENDIF.
+
+          l_new_merges_xml = l_new_merges_xml && l_new_merge.
+          l_merge_start_offset = l_merge_start_offset + strlen( l_found_merge ).
+        ENDDO.
+
+        IF l_found_merges_xml IS NOT INITIAL AND l_new_merges_xml IS NOT INITIAL AND l_new_merges_xml <> l_found_merges_xml.
+          lref_reminder_xml_handle->replace_element( i_old_element = l_found_merges_xml i_new_element = l_new_merges_xml ).
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    l_replaced_reminder_xml = lref_reminder_xml_handle->get_final_xml( ).
+
+    IF l_replaced_reminder_xml <> l_reminder_xml.
+      oxml_string = replace( val = oxml_string sub = l_reminder_xml with = l_replaced_reminder_xml ).
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD build_xml_table_by_template.
+    IF it_row_cell_format IS INITIAL.
+      DATA(lt_table_cell_formats) = get_row_cell_format_tbl( i_start_row_cell = i_start_template_cell
+                                                             i_end_cell_column = i_end_cell_column ).
+    ELSE.
+      lt_table_cell_formats = it_row_cell_format.
+    ENDIF.
+
+    LOOP AT i_abap_table ASSIGNING FIELD-SYMBOL(<fs_itog>).
+      DATA(r_row_xml) = lcl_oxml_utils=>build_xml_tbl_row_by_template( it_row_cell_formats = lt_table_cell_formats
+                                                                       is_abap_table_row = <fs_itog>
+                                                                     ).
+      r_table_xml = r_table_xml && r_row_xml.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD replace_element.
+    oxml_string = replace( val = oxml_string sub = i_old_element with = i_new_element ).
+  ENDMETHOD.
+
+  METHOD get_final_xml.
+    r_final_xml = oxml_string.
+  ENDMETHOD.
+
+ENDCLASS.
+
+CLASS lcl_oxml_utils IMPLEMENTATION.
+
+  METHOD abap_date_to_xlsx_internal.
+    r_xlsx_internal_date = CONV i( i_abap_date ) - CONV i( CONV d( '19000101') ) + 2.
+  ENDMETHOD.
+
+
+  METHOD get_cell_format.
+    r_cell_format = match( val = i_cell regex = 's="(?:[0-9]+)(?=")' ).
+    IF r_cell_format IS NOT INITIAL.
+      r_cell_format = r_cell_format+3.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD get_cell_absolute_position.
+    r_cell_position = match( val = i_cell regex = 'r="(?:[A-Z]+[0-9]+)(?=")' ).
+    IF r_cell_position IS NOT INITIAL.
+      r_cell_position = r_cell_position+3.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD get_position_row.
+    r_row = match( val = i_position regex = '[0-9]+').
+  ENDMETHOD.
+
+  METHOD get_position_column.
+    r_column = match( val = i_position regex = '([A-Z]+)(?=[0-9]+)' ).
+  ENDMETHOD.
+
+  METHOD replace_position_row.
+    DATA(l_cell_row) = get_position_row( i_position ).
+    r_position = replace( val = i_position sub = l_cell_row with = i_new_cell_row ).
+  ENDMETHOD.
+
+  METHOD replace_cell_absolute_position.
+    r_new_cell = replace( val = i_cell sub = get_cell_absolute_position( i_cell ) with = i_new_position ).
+  ENDMETHOD.
+
+  METHOD replace_cell_value.
+    DATA(l_old_value) = match( val = i_cell regex = '<v>([^<]+)(?=</v>)').
+    IF l_old_value IS NOT INITIAL.
+      l_old_value = l_old_value+3.
+    ENDIF.
+    r_cell = replace( val = i_cell sub = l_old_value with = i_new_value occ = 1 ).
+  ENDMETHOD.
+
+  METHOD make_next_column_cell_position.
+    DATA(l_position_column) = get_position_column( i_cell_position ).
+    IF l_position_column IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA(l_column_name_len) = strlen( l_position_column ).
+    DATA(l_next_column) = VALUE string( ).
+
+    DO l_column_name_len TIMES.
+      DATA(l_cur_char_offset) = l_column_name_len - sy-index.
+      DATA(l_cur_column_char) = substring( val = l_position_column off = l_cur_char_offset len = 1 ).
+      IF l_cur_column_char = 'Z'.
+        l_next_column = replace( val = l_position_column off = l_cur_char_offset len = 1 with = 'A' ).
+        DATA(l_is_z) = abap_true.
+        CONTINUE.
+      ELSE.
+        DATA(l_abcde_offset) = find( val = sy-abcde sub = |{ l_cur_column_char }| occ = 1 ).
+        IF l_abcde_offset = -1.
+          RETURN.
+        ENDIF.
+        l_cur_column_char = substring( val = sy-abcde off = l_abcde_offset + 1 len = 1 ).
+        l_next_column = replace( val = l_position_column off = l_cur_char_offset len = 1 with = l_cur_column_char ).
+        l_is_z = abap_false.
+        EXIT.
+      ENDIF.
+    ENDDO.
+    IF l_is_z IS NOT INITIAL.
+      l_next_column = 'A' && l_next_column.
+    ENDIF.
+
+    r_next_column_cell_position = l_next_column && condense( get_position_row( i_cell_position ) ).
+  ENDMETHOD.
+
+  METHOD build_date_cell.
+    DATA(l_internal_date_value) = |{ abap_date_to_xlsx_internal( i_date_value ) }|.
+    IF i_absolute_cell_pos IS NOT INITIAL.
+      r_cell = '<c r="' && condense( i_absolute_cell_pos ) && '" s="' && condense( i_cell_format ) && '"><v>' && l_internal_date_value && '</v></c>'.
+    ELSE.
+      r_cell = '<c s="' && condense( i_cell_format ) && '"><v>' && l_internal_date_value && '</v></c>'.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD build_text_cell.
+    IF i_absolute_cell_pos IS NOT INITIAL.
+      r_cell = '<c r="' && condense( i_absolute_cell_pos ) && '" t="inlineStr" s="' && condense( i_cell_format ) && '"><is><t>' && i_text_value && '</t></is></c>'.
+    ELSE.
+      r_cell = '<c t="inlineStr" s="' && condense( i_cell_format ) && '"><is><t>' && i_text_value && '</t></is></c>'.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD build_numeric_cell.
+    IF i_absolute_cell_pos IS NOT INITIAL.
+      r_cell = '<c r="' && condense( i_absolute_cell_pos ) && '" s="' && condense( i_cell_format ) && '"><v>' && i_numeric_value && '</v></c>'.
+    ELSE.
+      r_cell = '<c s="' && condense( i_cell_format ) && '"><v>' && i_numeric_value && '</v></c>'.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD get_row_absolute_position.
+    r_row_position = match( val = i_row regex = '<row r="(?:[0-9]+)(?=")' ).
+    IF r_row_position IS NOT INITIAL.
+      r_row_position = r_row_position+8.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD replace_row_absolute_position.
+    DATA(l_row_position_start_offset) = find( val = i_row regex = '<row r="(?:[0-9]+)(?=")' ).
+    IF l_row_position_start_offset = -1.
+      RETURN.
+    ELSE.
+      l_row_position_start_offset = l_row_position_start_offset + 8.
+    ENDIF.
+    DATA(l_row_position_end_offset) = find( val = i_row off = l_row_position_start_offset regex = '"' occ = 1 ).
+    IF l_row_position_end_offset = -1.
+      RETURN.
+    ENDIF.
+    r_row = replace( val = i_row off = l_row_position_start_offset len = l_row_position_end_offset - l_row_position_start_offset
+      with = i_new_position ).
+  ENDMETHOD.
+
+  METHOD get_merge_start_row.
+    r_merge_start_row = match( val = i_merge regex = '[0-9]+(?=:)' ).
+  ENDMETHOD.
+
+  METHOD replace_merge_start_row.
+    r_merge = replace( val = i_merge regex = '[0-9]+(?=:)'  with = i_changed_start_row occ = 1 ).
+  ENDMETHOD.
+
+  METHOD get_merge_end_row.
+    r_merge_end_row = match( val = i_merge regex = '[0-9]+(?=")' ).
+  ENDMETHOD.
+
+  METHOD replace_merge_end_row.
+    r_merge = replace( val = i_merge regex = '[0-9]+(?=")' with = i_changed_end_row occ = 1 ).
+  ENDMETHOD.
+
+  METHOD build_custom_merge.
+    r_custom_merge = '<mergeCell ref="' && i_start_column && i_start_row && ':' && i_end_column && i_end_row && '"/>'.
+  ENDMETHOD.
+
+  METHOD build_xml_tbl_row_by_template.
+    DESCRIBE FIELD is_abap_table_row TYPE DATA(l_struc_type) COMPONENTS DATA(l_componens_count).
+    IF l_componens_count = 0.
+      r_row_xml = build_row_field( i_format = VALUE #( it_row_cell_formats[ 1 ] OPTIONAL )
+                                   i_value = is_abap_table_row ).
+    ELSE.
+      DO.
+        ASSIGN COMPONENT sy-index OF STRUCTURE is_abap_table_row TO FIELD-SYMBOL(<field>).
+        IF sy-subrc <> 0.
+          EXIT.
+        ENDIF.
+        r_row_xml = r_row_xml && build_row_field( i_format = VALUE #( it_row_cell_formats[ sy-index ] OPTIONAL )
+                                                  i_value = <field> ).
+      ENDDO.
+    ENDIF.
+    r_row_xml = '<row>' && r_row_xml && '</row>'.
+  ENDMETHOD.
+
+  METHOD build_row_field.
+    DESCRIBE FIELD i_value TYPE DATA(dtype).
+    CASE dtype.
+      WHEN 'C' OR 'g' OR 'N'.
+        r_field_xml = build_text_cell( i_cell_format = i_format i_text_value = i_value ).
+      WHEN 'D'.
+        IF i_value IS INITIAL.
+          r_field_xml = build_text_cell( i_cell_format = i_format i_text_value = '' ).
+        ELSE.
+          r_field_xml = build_date_cell( i_cell_format = i_format i_date_value = i_value ).
+        ENDIF.
+      WHEN 'P' OR 'I' OR 's' OR 'a' OR 'e'.
+        r_field_xml = build_numeric_cell( i_cell_format = i_format i_numeric_value = i_value ).
+    ENDCASE.
+  ENDMETHOD.
+ENDCLASS.
