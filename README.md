@@ -1,4 +1,4 @@
-# XLSX-composer-
+# ABAP-XLSX-composer
 Build simple XLSX file from template XLSX file with SAP ABAP
 Library build as ABAP classes, base on parsing patterns in XML XLSX file. You can build, show, send XLSX file by email using simple XLSX template, where you can set any format options at any used cell. You need to fill some cells as placeholders for your data. 
 There are some restrictions:
