@@ -90,7 +90,7 @@ FORM send_excel_by_mail USING p_xlsx_xstring TYPE xstring.
   ENDTRY.
 ENDFORM.
 
-INCLUDE zlr_xlsx_xml_incl.
+INCLUDE z_xlsx_xml_incl.
 
 ****************************
 FORM make_excel_report USING pt_xls_data TYPE tty_xls CHANGING p_xlsx_xstring TYPE xstring.
